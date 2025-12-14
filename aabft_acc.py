@@ -4,16 +4,16 @@ import torch_npu
 import math
 
 n = 1024
-trials = 30000
+trials = 3000
 dtype = torch.bfloat16
 rate = 0
 flag = 0
-for bit in range(7, 15):
+for bit in range(15, 16):
     error_count = 0
     valid_count = 0
     for _ in range(trials):
-        A = utils.generate_matrice_clamp(128, n, std=1.0, mean=0, device=utils.device_npu, dtype=dtype)
-        B = utils.generate_matrice_clamp(n, 256, std=1.0, mean=0, device=utils.device_npu, dtype=dtype)
+        A = utils.generate_matrice_clamp(128, n, mean=0, std=1, device=utils.device_npu, dtype=dtype)
+        B = utils.generate_matrice_clamp(n, 256, mean=0, std=1, device=utils.device_npu, dtype=dtype)
         C_ref = torch.matmul(A, B)
         ith, jth = torch.randint(0, 128, (1,)).item(), torch.randint(0, 256, (1,)).item()
         C_ref[ith, jth], success = utils.flip_infuse(C_ref[ith, jth], bit)  #测试误检率时注释这一行，使用下一行
@@ -30,6 +30,8 @@ for bit in range(7, 15):
         #     print(f"error_bound: {error_bound}")
         #     flag = 1
         result = (diff <= error_bound).all() and (diff != torch.inf).all() and ~torch.isnan(diff).any()
+        # if result:
+        #     print("c_sum:", c_sum[ith].item(), "c_check:", c_check[ith].item(), "diff:", diff[ith].item(), "bound:", error_bound[ith].item())
         if not result:
             error_count += 1
     print(f"Bit Position: {bit}, Valid Trials: {valid_count}, Errors Detected: {error_count}, Error Rate: {error_count/valid_count*100 if valid_count > 0 else 0:.4f}%")

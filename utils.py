@@ -3,7 +3,7 @@ import torch_npu
 import math
 from tqdm import tqdm
 
-device_npu = torch.device("npu:0" if torch_npu.npu.is_available() else "cpu")
+device_npu = torch.device("npu:2" if torch_npu.npu.is_available() else "cpu")
 
 def checksum_bound_high_precision(a, b, c):
     t = 23
@@ -82,8 +82,13 @@ def my_bound_improve(a, b):
     bound = bound.squeeze()
     return bound
 
-def my_bound_improve_robust(a, b):
-    e = 1e-2
+def my_bound_improve_robust(a, b, dtype=torch.bfloat16):
+    us = {torch.bfloat16: 8e-3,
+          torch.float16: 1e-3,
+          torch.float32: 2.2e-6}
+    e = us[dtype]
+    a = a.to(torch.float32)
+    b = b.to(torch.float32)
     k = a.shape[-1]
     n = b.shape[-1]
     mu_a = torch.mean(a, dim=-1)
@@ -106,8 +111,8 @@ def my_bound_improve_robust(a, b):
     
     bound = e * (
         n * mu_a * sum_mu_b
-        +  2 * torch.sqrt(n * mu_a**2 * sum_sigma_b2 + n**2 * sigma_a2 * sum_mu_b2)
-        +  2 * sqrt_n * sigma_a2.sqrt() * sum_sigma_b2.sqrt()
+        +  2.5 * torch.sqrt(n * mu_a**2 * sum_sigma_b2 + n**2 * sigma_a2 * sum_mu_b2)
+        +  2.5 * sqrt_n * sigma_a2.sqrt() * sum_sigma_b2.sqrt()
     )
     
     bound = bound.squeeze()
@@ -117,16 +122,14 @@ def generate_matrice(sizem, sizek, std, mean, device, dtype):
     a = torch.randn(sizem, sizek, device=device, dtype=dtype) * std + mean
     return a
 
-def generate_matrice_uniform(sizem, sizek, std, mean, device, dtype):
+def generate_matrice_uniform(sizem, sizek, lower, upper, device, dtype):
     a = torch.rand(sizem, sizek, device=device, dtype=dtype)
-    current_std = math.sqrt(1/12)
-    a = (a - 0.5) * (std / current_std) + mean
-    
+    a = a * (upper - lower) + lower
     return a
 
 def generate_matrice_clamp(sizem, sizek, std, mean, device, dtype):
     a = torch.randn(sizem, sizek, device=device, dtype=dtype) * std + mean
-    a = a = torch.clamp(a, min=-1, max=1)
+    a = torch.clamp(a, min=mean - std, max=mean + std)
     return a
 
 def generate_matrice_almost_Bernoulli(sizem, sizek, std, mean, device, dtype):
@@ -166,12 +169,12 @@ def flip_infuse(a, i):
             success = True
         return flipped_float_tensor, success
 
-def FT_matmul(a, b, FT_algorithm=my_bound_improve_robust):
+def FT_matmul(a, b, dtype=torch.bfloat16, FT_algorithm=my_bound_improve_robust):
     # 将A，B切割为 128*1024，1024*256 的小矩阵进行计算
     # 先将 A，B 补全为块大小的整数倍
     success = True
-    a = a.to(torch.bfloat16)
-    b = b.to(torch.bfloat16)
+    a = a.to(dtype)
+    b = b.to(dtype)
     sizem = a.shape[0]
     sizek = a.shape[1]
     sizen = b.shape[1]

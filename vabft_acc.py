@@ -1,35 +1,141 @@
-import utils    
 import torch
 import torch_npu
-import math
+import utils
 
-n = 4096
+n = 1024
 trials = 30000
-dtype = torch.bfloat16
-rate = 0
-flag = 0
-for bit in range(7, 15):
-    error_count = 0
-    valid_count = 0
-    for _ in range(trials):
-        A = utils.generate_matrice_clamp(128, n, std=1, mean=0, device=utils.device_npu, dtype=dtype)
-        B = utils.generate_matrice_clamp(n, 256, std=1, mean=0, device=utils.device_npu, dtype=dtype)
-        C_ref = torch.matmul(A, B)
-        ith, jth = torch.randint(0, 128, (1,)).item(), torch.randint(0, 64, (1,)).item()
-        C_ref[ith, jth], success = utils.flip_infuse(C_ref[ith, jth], bit) #测试误检率时注释这一行，使用下一行
-        # success = True
-        if not success:
-            continue
-        valid_count += 1
-        c_check = torch.matmul(A, torch.sum(B, dim=-1, keepdim=True)).squeeze()
-        error_bound = utils.my_bound_improve_robust(A, B)
+dtypes = [torch.bfloat16, torch.float32, torch.float16]
+
+# 定义四种矩阵初始化方式及其参数
+init_methods = [
+    {
+        'name': 'generate_matrice_normal',
+        'func': utils.generate_matrice,
+        'params': {'std': 1e-2, 'mean': 1e-2}
+    },
+    {
+        'name': 'generate_matrice_clamp',
+        'func': utils.generate_matrice_clamp,
+        'params': {'std': 1e-2, 'mean': 1e-2}
+    },
+    {
+        'name': 'generate_matrice',
+        'func': utils.generate_matrice,
+        'params': {'std': 1e-2, 'mean': 1e-8}
+    },
+    {
+        'name': 'generate_matrice_uniform',
+        'func': utils.generate_matrice_uniform,
+        'params': {'lower': -1e-2, 'upper': 1e-2}
+    }
+]
+
+output_file1 = "error_injection_results(fp16).txt"
+output_file2 = "non_error_test_results.txt"
+
+with open(output_file1, "a") as f:
+    f.write("Error Injection Test Results\n")
+    f.write("=" * 50 + "\n\n")
+    
+    for init_method in init_methods:
+        f.write(f"Initialization Method: {init_method['name']}\n")
+        f.write(f"Parameters: {init_method['params']}\n")
+        f.write("-" * 50 + "\n")
         
-        c_sum = torch.sum(C_ref, dim=-1, keepdim=True)
-        diff = torch.abs(c_check - c_sum.squeeze())
+        for dtype in dtypes:
+            f.write(f"\nData type: {dtype}\n")
+            print(f"Initialization Method: {init_method['name']}")
+            print(f"Data type: {dtype}")
+            
+            total_rate = 0
+            valid_bit_count = 0
+            
+            exponential_bits = {
+                torch.bfloat16: range(7, 16),
+                torch.float16: range(10, 16),
+                torch.float32: range(23, 32)
+            }
+
+            for bit in exponential_bits[dtype]:
+                error_count = 0
+                valid_count = 0
+                max_attempts = trials * 5  # 最大尝试次数，防止无限循环
+                attempts = 0
+                
+                # 尝试注入错误直到达到目标成功次数或超过最大尝试次数
+                while valid_count < trials and attempts < max_attempts:
+                    attempts += 1
+                    
+                    # 使用指定的初始化方法生成矩阵
+                    A = init_method['func'](
+                        128, n, 
+                        device=utils.device_npu, 
+                        dtype=dtype,
+                        **init_method['params']
+                    )
+                    B = init_method['func'](
+                        n, 256,
+                        device=utils.device_npu, 
+                        dtype=dtype,
+                        **init_method['params']
+                    )
+                    
+                    C_ref = torch.matmul(A, B)
+                    ith, jth = torch.randint(0, 128, (1,)).item(), torch.randint(0, 256, (1,)).item()
+                    
+                    # 尝试注入错误
+                    C_ref[ith, jth], success = utils.flip_infuse(C_ref[ith, jth], bit)
+                    
+                    success = not success # 1-0 flip
+                    
+                    # success = True # 用于测试误检率
+                    
+                    if not success:
+                        continue
+                    
+                    valid_count += 1
+                    
+                    # 计算检查值和误差界限
+                    c_check = torch.matmul(A, torch.sum(B, dim=-1, keepdim=True)).squeeze()
+                    error_bound = utils.my_bound_improve_robust(A, B, dtype=dtype)
+                    
+                    c_sum = torch.sum(C_ref, dim=-1, keepdim=True)
+                    diff = torch.abs(c_check - c_sum.squeeze()).to(torch.float32)
+                    
+                    # if(dtype == torch.float16 and init_method['name']=='generate_matrice_normal'):
+                    #    print("check:", c_check[ith], "sum:", c_sum.squeeze()[ith], "diff:", diff[ith], "bound:", error_bound[ith])
+                    
+                    # 检查误差是否在界限内
+                    result = (diff <= error_bound).all() and (diff != torch.inf).all() and ~torch.isnan(diff).any()
+                    if not result:
+                        error_count += 1
+                        
+                    # if result:
+                        # print("c_sum:", c_sum[ith].item(), "c_check:", c_check[ith].item(), "diff:", diff[ith].item(), "bound:", error_bound[ith].item())
+                
+                # 检查该bit位是否有效
+                if valid_count == 0:
+                    print(f"Bit Position: {bit}, No successful injections after {max_attempts} attempts - SKIPPED")
+                    f.write(f"Bit Position: {bit}, No successful injections after {max_attempts} attempts - SKIPPED\n")
+                    continue
+                
+                # 计算错误率
+                error_rate = error_count / valid_count * 100 if valid_count > 0 else 100
+                print(f"Bit Position: {bit}, Valid Trials: {valid_count}, Errors Detected: {error_count}, Error Rate: {error_rate:.4f}%")
+                f.write(f"Bit Position: {bit}, Valid Trials: {valid_count}, Errors Detected: {error_count}, Error Rate: {error_rate:.4f}%\n")
+                
+                total_rate += error_rate
+                valid_bit_count += 1
+            
+            # 计算平均错误率
+            if valid_bit_count > 0:
+                avg_error_rate = total_rate / valid_bit_count
+                print(f"Average Error Rate over all bits: {avg_error_rate:.6f}%\n")
+                f.write(f"Average Error Rate over all bits: {avg_error_rate:.6f}%\n\n")
+            else:
+                print(f"No valid bits for this data type - all injections failed\n")
+                f.write(f"No valid bits for this data type - all injections failed\n\n")
         
-        result = (diff <= error_bound).all() and (diff != torch.inf).all() and ~torch.isnan(diff).any()
-        if not result:
-            error_count += 1
-    print(f"Bit Position: {bit}, Valid Trials: {valid_count}, Errors Detected: {error_count}, Error Rate: {error_count/valid_count*100 if valid_count > 0 else 0:.4f}%")
-    rate += error_count/valid_count*100 if valid_count > 0 else 100
-print(f"Average Error Rate over all bits: {rate/8:.6f}%")
+        f.write("\n" + "=" * 50 + "\n\n")
+
+print("Results have been saved to 'error_injection_results.txt'")

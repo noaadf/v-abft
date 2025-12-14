@@ -1,0 +1,8 @@
+*
+
+# 取消忽略特定文件或目录
+!README.md
+!aabft_acc.py
+!vabft_acc.py
+!utils.py
+!.gitignore
