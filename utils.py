@@ -87,8 +87,6 @@ def my_bound_improve_robust(a, b, dtype=torch.bfloat16):
           torch.float16: 1e-3,
           torch.float32: 2.2e-6}
     e = us[dtype]
-    a = a.to(torch.float32)
-    b = b.to(torch.float32)
     k = a.shape[-1]
     n = b.shape[-1]
     mu_a = torch.mean(a, dim=-1)
@@ -111,8 +109,46 @@ def my_bound_improve_robust(a, b, dtype=torch.bfloat16):
     
     bound = e * (
         n * mu_a * sum_mu_b
-        +  2.5 * torch.sqrt(n * mu_a**2 * sum_sigma_b2 + n**2 * sigma_a2 * sum_mu_b2)
+        +  2.5 * n * torch.sqrt(mu_a**2 * sum_sigma_b2 / n + sigma_a2 * sum_mu_b2)
         +  2.5 * sqrt_n * sigma_a2.sqrt() * sum_sigma_b2.sqrt()
+    )
+    
+    bound = bound.squeeze()
+    print("bound_mean:", bound.mean().item())
+    return bound
+
+
+def my_bound_improve_robust_sampling(a, b, dtype=torch.bfloat16):
+    us = {torch.bfloat16: 8e-3,
+          torch.float16: 1e-3,
+          torch.float32: 2.2e-6}
+    e = us[dtype]
+    k = a.shape[-1]
+    n = b.shape[-1]
+    maskn = torch.arange(n) % 32 < 32
+    maskk = torch.arange(k) % 32 < 4
+    mu_a = torch.mean(a[..., maskk], dim=-1)
+    mu_b = torch.mean(b[..., maskn], dim=-1)
+    a_max = torch.max(a[..., maskk], dim=-1).values
+    b_max = torch.max(b[..., maskn], dim=-1).values
+    a_min = torch.min(a[..., maskk], dim=-1).values
+    b_min = torch.min(b[..., maskn], dim=-1).values
+    sigma_a2 = (a_max - mu_a)*(mu_a - a_min)
+    sigma_b2 = (b_max - mu_b)*(mu_b - b_min)
+
+    mu_a = torch.abs(mu_a)
+    mu_b = torch.abs(mu_b)
+    
+    sqrt_n = torch.sqrt(torch.tensor(n, dtype=torch.float32))
+    
+    sum_mu_b = torch.sum(mu_b)
+    sum_mu_b2 = torch.sum(mu_b**2)
+    sum_sigma_b2 = torch.sum(sigma_b2)
+    
+    bound = 2 * e * (
+        n * mu_a * sum_mu_b
+        +  3 * n * torch.sqrt(mu_a**2 * sum_sigma_b2 / n + sigma_a2 * sum_mu_b2)
+        +  3 * sqrt_n * sigma_a2.sqrt() * sum_sigma_b2.sqrt()
     )
     
     bound = bound.squeeze()
@@ -169,12 +205,12 @@ def flip_infuse(a, i):
             success = True
         return flipped_float_tensor, success
 
-def FT_matmul(a, b, dtype=torch.bfloat16, FT_algorithm=my_bound_improve_robust):
+def FT_matmul(a, b, FT_algorithm=my_bound_improve_robust):
     # 将A，B切割为 128*1024，1024*256 的小矩阵进行计算
     # 先将 A，B 补全为块大小的整数倍
     success = True
-    a = a.to(dtype)
-    b = b.to(dtype)
+    a = a.to(torch.bfloat16)
+    b = b.to(torch.bfloat16)
     sizem = a.shape[0]
     sizek = a.shape[1]
     sizen = b.shape[1]
@@ -193,7 +229,8 @@ def FT_matmul(a, b, dtype=torch.bfloat16, FT_algorithm=my_bound_improve_robust):
         b = torch.cat([b, torch.zeros(b.shape[0], pad_n, device=b.device, dtype=b.dtype)], dim=1)
 
     c = torch.zeros(sizem + pad_m, sizen + pad_n, device=a.device, dtype=a.dtype)
-    for i in tqdm(range(0, (sizem + pad_m) // block_m), desc="外层循环"):
+    # for i in tqdm(range(0, (sizem + pad_m) // block_m), desc="外层循环"):
+    for i in range(0, (sizem + pad_m) // block_m):
         for j in range(0, (sizen + pad_n) // block_n):
             for k in range(0, (sizek + pad_k) // block_k):
                 a_block = a[i*block_m:(i+1)*block_m, k:k + block_k]
@@ -211,6 +248,7 @@ def FT_matmul(a, b, dtype=torch.bfloat16, FT_algorithm=my_bound_improve_robust):
                     # torch.save(a_block, "/home/gyh/data/a_block_error.pth")
                     # torch.save(b_block, "/home/gyh/data/b_block_error.pth")
                     # raise ValueError("FT_matmul: Error bound exceeded during block multiplication.")
+                    error_msg = f"Block fail at i={i}, j={j}, k={k}. Max diff: {diff.max().item()}"
                     success = False
-                    return success, c[:sizem, :sizen]
-    return success, c[:sizem, :sizen]
+                    return success, error_msg
+    return success, "Success"

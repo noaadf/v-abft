@@ -3,7 +3,7 @@ import torch_npu
 import utils
 
 n = 1024
-trials = 30000
+trials = 10000
 dtypes = [torch.bfloat16, torch.float32, torch.float16]
 
 # 定义四种矩阵初始化方式及其参数
@@ -11,26 +11,26 @@ init_methods = [
     {
         'name': 'generate_matrice_normal',
         'func': utils.generate_matrice,
-        'params': {'std': 1e-2, 'mean': 1e-2}
+        'params': {'std': 1, 'mean': 1}
     },
     {
         'name': 'generate_matrice_clamp',
         'func': utils.generate_matrice_clamp,
-        'params': {'std': 1e-2, 'mean': 1e-2}
+        'params': {'std': 1, 'mean': 1}
     },
     {
         'name': 'generate_matrice',
         'func': utils.generate_matrice,
-        'params': {'std': 1e-2, 'mean': 1e-8}
+        'params': {'std': 1, 'mean': 1e-6}
     },
     {
         'name': 'generate_matrice_uniform',
         'func': utils.generate_matrice_uniform,
-        'params': {'lower': -1e-2, 'upper': 1e-2}
+        'params': {'lower': -1, 'upper': 1}
     }
 ]
 
-output_file1 = "error_injection_results(fp16).txt"
+output_file1 = "error_injection_results0.txt"
 output_file2 = "non_error_test_results.txt"
 
 with open(output_file1, "a") as f:
@@ -79,16 +79,19 @@ with open(output_file1, "a") as f:
                         dtype=dtype,
                         **init_method['params']
                     )
+                    if(dtype == torch.float16):
+                        A = A*1e-2
+                        B = B*1e-2
                     
                     C_ref = torch.matmul(A, B)
                     ith, jth = torch.randint(0, 128, (1,)).item(), torch.randint(0, 256, (1,)).item()
                     
                     # 尝试注入错误
-                    C_ref[ith, jth], success = utils.flip_infuse(C_ref[ith, jth], bit)
+                    # C_ref[ith, jth], success = utils.flip_infuse(C_ref[ith, jth], bit)
                     
-                    success = not success # 1-0 flip
+                    # success = not success # 1-0 flip
                     
-                    # success = True # 用于测试误检率
+                    success = True # 用于测试误检率
                     
                     if not success:
                         continue
@@ -98,12 +101,9 @@ with open(output_file1, "a") as f:
                     # 计算检查值和误差界限
                     c_check = torch.matmul(A, torch.sum(B, dim=-1, keepdim=True)).squeeze()
                     error_bound = utils.my_bound_improve_robust(A, B, dtype=dtype)
-                    
                     c_sum = torch.sum(C_ref, dim=-1, keepdim=True)
-                    diff = torch.abs(c_check - c_sum.squeeze()).to(torch.float32)
-                    
-                    # if(dtype == torch.float16 and init_method['name']=='generate_matrice_normal'):
-                    #    print("check:", c_check[ith], "sum:", c_sum.squeeze()[ith], "diff:", diff[ith], "bound:", error_bound[ith])
+                    diff = torch.abs(c_check - c_sum.squeeze())
+                    # print("diff_abs_mean:", diff.abs().mean().item())
                     
                     # 检查误差是否在界限内
                     result = (diff <= error_bound).all() and (diff != torch.inf).all() and ~torch.isnan(diff).any()

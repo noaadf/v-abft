@@ -1,7 +1,7 @@
 # 浮点数校验误差门限设计说明书
 **Design Specification for Floating-Point Error Bounding in GEMM**
 
-| 文档版本 | 1.1  |  |  |
+| 文档版本 | 1.2  |  |  |
 | :--- | :--- | :--- | :--- |
 | **适用场景** | 大模型训练/推理 GEMM 算子校验 | **硬件目标** | 昇腾910B |
 
@@ -15,7 +15,12 @@
     *   随着精度降低（BF16/FP8）和矩阵规模增大（$K > 8192$），累加产生的舍入误差幅度可能超过单粒子翻转（SEU）引起的偏差，导致传统固定门限校验失效（漏检或误报）。
     *   在低精度下，随着计算深度增加，累加误差会显著放大，仅仅依靠C矩阵的门限检测逐渐失效。
     *   此外，由于误检的代价往往更大（需要更换芯片/重新计算），我们希望在0误检的前提下，最大化检测率。
-*   **现状**：基线方案（如 A-ABFT）虽然实现了自适应，但引入了过高的计算开销（$O(N^2)$ 级别但在小矩阵下显著），且不能通过多样化的数据测试。
+*   **现状**：原版的A-ABFT方案：
+    *   计算逻辑不适用于SIMD编程模型
+    *   其给出的估计虽然显著优于传统的SEA-ABFT（1-2个数量级），但和真实的舍入误差仍然差了2-4个数量级,随矩阵大小增长。
+    *   A-ABFT是基于向量内积操作给出的估计，这样做意味着误差将有检验码、求和码的误差分别构成，一方面增加了计算量，另一方面，这也是门限不够紧致的原因。
+
+    基线方案（基于A-ABFT）虽简化了部分计算，但仍然有着过高的计算开销（$O(N^2)$ 级别但在小矩阵下显著），且由于简化不能通过多样化的数据测试。
 
 ### 1.2 设计目标
 本设计旨在提出一种**基于统计方差估计的动态门限算法（Variance-Estimation based FT-GEMM）**，我们暂且称之为V-ABFT，达成以下指标：
@@ -77,16 +82,16 @@ ABFT 的核心逻辑是比较“计算结果的行和”与“输入矩阵预计
 对输入矩阵$A \in R^{M \times K}, B \in R^{K \times N}$,定义校验误差 $E$ 为检验差的绝对值：
 
 $$
-E = \left| fl\left( \sum_n fl \left(\sum_k A_{ik} B_{kn} \right) \right) - fl\left( \sum_k A_{ik} fl\left( \sum_n B_{kn} \right) \right) \right|
+E = \left| fl\left( \sum_n fl \left(\sum_k A_{mk} B_{kn} \right) \right) - fl\left( \sum_k A_{mk} fl\left( \sum_n B_{kn} \right) \right) \right|
 $$
 
 利用上述浮点模型展开，误差来源于两条计算路径累加深度 $s_1$（先乘后加再求和）与 $s_2$（先求和再乘）的差异：
 
 $$
 \begin{align*}
-E &= \left| \sum_n \sum_k A_{ik} B_{kn} (1+\delta u)^{s_1} - \sum_n \sum_k A_{ik} B_{kn} (1+\delta u)^{s_2} \right| \\
-  &= \left| \sum_n \sum_k A_{ik} B_{kn} \cdot \underbrace{((1+\delta u)^{s_1} - (1+\delta u)^{s_2})}_{\text{Effective Error Factor } e_k} \right| \\
-  &:= \left| e_k \sum_n \sum_k A_{ik} B_{kn} \right|
+E &= \left| \sum_n \sum_k A_{mk} B_{kn} (1+\delta u)^{s_1} - \sum_n \sum_k A_{mk} B_{kn} (1+\delta u)^{s_2} \right| \\
+  &= \left| \sum_n \sum_k A_{mk} B_{kn} \cdot \underbrace{((1+\delta u)^{s_1} - (1+\delta u)^{s_2})}_{\text{Effective Error Factor } e_{kn}} \right| \\
+  &:= \left| \sum_n \sum_k e_{kn} A_{mk} B_{kn} \right|
 \end{align*}
 $$
 
@@ -97,67 +102,67 @@ $$
 直接使用三角不等式（$|a+b| \le |a|+|b|$）会导致门限过于宽松（Worst-case Bound），在低精度下无法检测微小错误。因此，我们引入统计模型。
 
 假设 $A, B$ 的元素服从独立分布，利用均值 $\mu$ 和方差 $\sigma$ 进行标准化分解：
-$$ A_{ik} = \mu_{Ai} + \sigma_{Ai} \cdot a_{ik}, \quad a_{ik} \sim F_a $$
+$$ A_{mk} = \mu_{Am} + \sigma_{Am} \cdot a_{mk}, \quad a_{mk} \sim F_a $$
 
 $$ B_{kn} = \mu_{Bk} + \sigma_{Bk} \cdot b_{kn}, \quad b_{kn} \sim F_b $$
 
 >注：这里$F_a,F_b$是两个方差为1的分布，不一定是单位正态
-根据您更新的变量定义（$A$ 使用行统计量 $\mu_{Ai}$，$B$ 使用行统计量 $\mu_{Bk}$），推导过程中的下标和求和逻辑需要进行严格的同步更新。
+根据您更新的变量定义（$A$ 使用行统计量 $\mu_{Am}$，$B$ 使用行统计量 $\mu_{Bk}$），推导过程中的下标和求和逻辑需要进行严格的同步更新。
 
 将 $E$ 展开：
 $$
 \begin{align*}
-E &= \left| e_k \sum_n \sum_k (\mu_{Ai} + \sigma_{Ai} a_{ik})(\mu_{Bk} + \sigma_{Bk} b_{kn}) \right| \\
-  &= \left| e_k \sum_k (\mu_{Ai} + \sigma_{Ai} a_{ik}) \underbrace{\left( \sum_n (\mu_{Bk} + \sigma_{Bk} b_{kn}) \right)}_{\text{Sum over } N \text{ columns (Row } k \text{ of B)}} \right|
+E &= \left| \sum_n \sum_k e_{kn} (\mu_{Am} + \sigma_{Am} a_{mk})(\mu_{Bk} + \sigma_{Bk} b_{kn}) \right| \\
+  &= \left| \sum_k (\mu_{Am} + \sigma_{Am} a_{mk}) \underbrace{\left(e_{kn} \sum_n (\mu_{Bk} + \sigma_{Bk} b_{kn}) \right)}_{\text{Sum over } N \text{ columns (Row } k \text{ of B)}} \right|
 \end{align*}
 $$
 
-根据中心极限定理（CLT），对 $B$ 的 $N$ 列求和。注意此处 $\mu_{Bk}$ 和 $\sigma_{Bk}$ 是 $B$ 第 $k$ 行的统计量，因此在对 $n$ 求和时视为常数：
+根据中心极限定理（CLT），对 $B$ 的 $N$ 列求和。注意此处 $\mu_{Bk}$ 和 $\sigma_{Bk}$ 是 $B$ 第 $k$ 行的统计量，因此在对 $n$ 求和时视为常数,记$\alpha_k=\frac{\sum_n e_{kn}}{N}$,$\beta_k=\sqrt{\frac{\sum_n e_{kn}^2}{N}}$则有：
 
-$$ \sum_n^N \mu_{Bk} = N \mu_{Bk} $$
+$$ \sum_n e_{kn} \mu_{Bk} = N \alpha_k \mu_{Bk} $$
 
-$$ \sum_n^N \sigma_{Bk} b_{kn} = \sigma_{Bk} \sum_n b_{kn} = \sqrt{N} \sigma_{Bk} \cdot b'_{k} $$
+$$ \sum_n e_{kn} \sigma_{Bk} b_{kn}  = \sqrt{N} \sigma_{Bk} \beta_k b'_{k} $$
 
-其中 $b'_k \sim F_b'$ 是代表 $B$ 第 $k$ 行随机波动的新单位变量。
+其中 $b'_k \sim F_b'$ 是代表 $B$ 第 $k$ 行随机波动的单位（方差）变量。
 
 代入上式，误差 $E$ 变为对 $K$ 维度的累加：
 $$
-E = \left| e_k \sum_k^K \left[ (\mu_{Ai} + \sigma_{Ai} a_{ik}) \cdot (N \mu_{Bk} + \sqrt{N} \sigma_{Bk} b'_{k}) \right] \right|
+E = \left| \sum_k^K \left[ (\mu_{Am} + \sigma_{Am} a_{mk}) \cdot (N \alpha_k \mu_{Bk} + \sqrt{N} \sigma_{Bk}\beta_k b'_{k}) \right] \right|
 $$
 
-展开括号内的四项乘积（注意 $\mu_{Ai}, \sigma_{Ai}$ 均不随 $k$ 变化，可提取至求和符号外）：
+展开括号内的四项乘积（注意 $\mu_{Am}, \sigma_{Am}$ 均不随 $k$ 变化，可提取至求和符号外）：
 
 $$
 \begin{align*}
-E = \Bigg| e_k \cdot \bigg( & \underbrace{N \mu_{Ai} \sum_k \mu_{Bk}}_{\text{① Bias Term}} + \underbrace{\sqrt{N} \mu_{Ai} \sum_k \sigma_{Bk} b'_k}_{\text{② Random B Term}} \\
-& + \underbrace{N \sigma_{Ai} \sum_k \mu_{Bk} a_{ik}}_{\text{③ Random A Term}} + \underbrace{\sqrt{N} \sigma_{Ai} \sum_k \sigma_{Bk} a_{ik} b'_k}_{\text{④ Interaction Term}} \bigg) \Bigg|
+E = \Bigg| \bigg( & \underbrace{N \mu_{Am} \sum_k \alpha_k \mu_{Bk}}_{\text{① Bias Term}} + \underbrace{\sqrt{N} \mu_{Am} \sum_k \sigma_{Bk} \beta_k b'_k}_{\text{② Random B Term}} \\
+& + \underbrace{N \sigma_{Am} \sum_k \alpha_k\mu_{Bk} a_{mk}}_{\text{③ Random A Term}} + \underbrace{\sqrt{N} \sigma_{Am} \sum_k \sigma_{Bk} \beta_k a_{mk} b'_k}_{\text{④ Interaction Term}} \bigg) \Bigg|
 \end{align*}
 $$
 
 #### 物理意义解读
 
-1.  **项 ① (Bias Term)**: $N \mu_{Ai} (\sum \mu_{Bk})$。这是主要的直流分量，由 $A$ 的行均值和 $B$ 的列和均值决定。
-2.  **项 ② (Random B)**: $\sqrt{N} \mu_{Ai} \sqrt{K} \dots$。由 $B$ 矩阵的行内波动引起，随 $\sqrt{K}$ 增长。
-3.  **项 ③ (Random A)**: $N \sigma_{Ai} \sqrt{K} \dots$。由 $A$ 矩阵的行内波动引起，随 $\sqrt{K}$ 增长。
-4.  **项 ④ (Interaction)**: $\sqrt{N} \sigma_{Ai} \sqrt{K} \dots$，在A、B都是0均值时占据主导，随 $\sqrt{K}$ 增长。
+1.  **项 ① (Bias Term)**: $N \mu_{Am} (\sum \mu_{Bk})$。这是主要的直流分量，由 $A$ 的行均值和 $B$ 的列和均值决定。
+2.  **项 ② (Random B)**: $\sqrt{N} \mu_{Am} \sqrt{K} \dots$。由 $B$ 矩阵的行内波动引起，随 $\sqrt{K}$ 增长。
+3.  **项 ③ (Random A)**: $N \sigma_{Am} \sqrt{K} \dots$。由 $A$ 矩阵的行内波动引起，随 $\sqrt{K}$ 增长。
+4.  **项 ④ (Interaction)**: $\sqrt{N} \sigma_{Am} \sqrt{K} \dots$，在A、B都是0均值时占据主导，随 $\sqrt{K}$ 增长。
 
 然后利用三角不等式，
 $$
 \begin{align*}
-E \leq \underbrace{\left| \sum_k e_k N \mu_{Ai} \mu_{Bk} \right|}_{\text{Bias Term (DC)}} + \underbrace{\left| \sum_k e_k \sqrt{N} \mu_{Ai} \sigma_{Bk} b'_{k}  +  \sum_k e_k N \sigma_{Ai} a_{ik} \mu_{Bk} \right|}_{\text{Linear Random Term (Primary Noise)}} + \underbrace{\left| \sum_k e_k \sqrt{N} \sigma_{Ai} a_{ik} \sigma_{Bk} b'_{k} \right|}_{\text{Interaction Term (Secondary Noise)}}
+E \leq \underbrace{\left| \sum_k \alpha_k N \mu_{Am} \mu_{Bk} \right|}_{\text{Bias Term (DC)}} + \underbrace{\left| \sum_k \beta_k \sqrt{N} \mu_{Am} \sigma_{Bk} b'_{k}  +  \sum_k \alpha_k N \sigma_{Am} a_{mk} \mu_{Bk} \right|}_{\text{Linear Random Term (Primary Noise)}} + \underbrace{\left| \sum_k \beta_k \sqrt{N} \sigma_{Am} a_{mk} \sigma_{Bk} b'_{k} \right|}_{\text{Interaction Term (Secondary Noise)}}
 \end{align*}
 $$
 
-为了得到工程可用的门限，我们引入一致上界 $e_{max} \ge |e_k|$。
-对于随机项，利用独立随机变量和的方差性质（$Var(\sum X_i) = \sum Var(X_i)$），并取 $4\sigma$（约 99.9% 置信度）作为安全边界：
+为了得到工程可用的门限，我们引入一致上界 $e_{max} \ge max\{|\alpha_k|, |\beta_k|\}$，将其提取至外部：
+对于随机项，利用独立随机变量和的方差性质（$Var(\sum X_i) = \sum Var(X_i)$），并取 $4\sigma$（对正态分布约 99.9% 置信度）作为安全边界：
 
 $$
 \begin{align*}
-Bound &\lesssim e_{max} \left( \underbrace{N|\mu_{Ai}| \sum_k |\mu_{Bk}|}_{\text{Deterministic Bound}} + 4\sqrt{\underbrace{N \sum_k \mu_{Ai}^2 \sigma_{Bk}^2}_{\text{Var of Term 2}} + \underbrace{N^2 \sigma_{Ai}^2 \sum_k \mu_{Bk}^2}_{\text{Var of Term 3}}} + 4\underbrace{\sqrt{N}\sigma_{Ai} \sqrt{\sum_k \sigma_{Bk}^2}}_{\text{SD of Term 4}} \right)
+Bound &\lesssim e_{max} \left( \underbrace{N|\mu_{Am}| \sum_k |\mu_{Bk}|}_{\text{Deterministic Bound}} + 4\sqrt{\underbrace{N \sum_k \mu_{Am}^2 \sigma_{Bk}^2}_{\text{Var of Term 2}} + \underbrace{N^2 \sigma_{Am}^2 \sum_k \mu_{Bk}^2}_{\text{Var of Term 3}}} + 4\underbrace{\sqrt{N}\sigma_{Am} \sqrt{\sum_k \sigma_{Bk}^2}}_{\text{SD of Term 4}} \right)
 \end{align*}
 $$
 
->注：2、3项往往是独立的变量，因此我们将它们合并处理，而第4项与2、3项有一定的耦合，因此单独放缩。另外，在a、b独立时$a_{ik} b'_{k}$方差为1，但如果它们正相关，那么方差>1,此时可能要取更大的系数来控制。
+>注：2、3项往往是独立的变量，因此我们将它们合并处理，而第4项与2、3项有一定的耦合，因此单独放缩。另外，在a、b独立时$A_{mk} b'_{k}$方差为1，但如果它们正相关，那么方差>1,此时可能要取更大的系数来控制。
 
 ## 3 最终工程门限公式
 
@@ -171,11 +176,20 @@ $$
 得到最终的**可计算门限**：
 
 $$
-\text{Threshold} = 3u \left( \underbrace{n|\mu_{Ai}| \sum_k |\mu_{Bk}|}_{\text{Deterministic Bound}} + 4\sqrt{\underbrace{N \sum_k \mu_{Ai}^2 \sigma_{Bk}^2}_{\text{Var of Term 2}} + \underbrace{N^2 \sigma_{Ai}^2 \sum_k \mu_{Bk}^2}_{\text{Var of Term 3}}} + 4\underbrace{\sqrt{N}\sigma_{Ai} \sqrt{\sum_k \sigma_{Bk}^2}}_{\text{SD of Term 4}} \right)
+\text{Threshold} = 3u \left( \underbrace{n|\mu_{Am}| \sum_k |\mu_{Bk}|}_{\text{Deterministic Bound}} + 4\sqrt{\underbrace{N \sum_k \mu_{Am}^2 \sigma_{Bk}^2}_{\text{Var of Term 2}} + \underbrace{N^2 \sigma_{Am}^2 \sum_k \mu_{Bk}^2}_{\text{Var of Term 3}}} + 4\underbrace{\sqrt{N}\sigma_{Am} \sqrt{\sum_k \sigma_{Bk}^2}}_{\text{SD of Term 4}} \right)
 $$
 
 > 注：目前对于$e_{max}$的粗略估计方法：生成分布服从$N(1,1)$的矩阵A,B，在机器精度下计算检验码和C矩阵行和的相对误差，反复进行100k次实验，取最大值作为$e_{max}$。可以针对不同硬件进行更精细的经验性测试。在910B芯片上，BF16、FP32、FP16下的实验值约为7.76e-03，2.13e-06，9.77e-04,$e_{max}$分别取成8e-03，2.2e-06，1e-03。
 > 实验中发现，FP32下$e_{max}$估计值随矩阵规模增长，低精度下$e_{max}$与矩阵规模关系不大，可能与硬件的累加单元设计有关。
+> 比起A-ABFT原版实现，我们在FP32下的门限仅仅比误差高出一个数量级（～20x），且不随矩阵大小增长。
+
+### 3.1 采样法加速
+
+目前均值、方差估计的计算占门限开销较大比重，为加速计算，我们在容许一定误检的情况下进行采样计算，并在检出错误之后进行二次确认。这样可以减少门限的额外计算开销。
+
+具体而言，我们可以跨stride列进行采样计算均值和方差。例如，对于矩阵 $A$ 的行均值 $\mu_{Am}$，我们可以只用下标$ i\text{ mod } 32 < 16 $的数据计算均值和方差。
+
+但是采样比例对A、B矩阵统计量估计的影响是异质的，A矩阵分块行长度为$K=1024$，B矩阵分块行长度为$N=256$，直观上讲，如果采取同样的采样比例，A、B的统计量置信度差异较大。因此，我们采用不同的采样比例来平衡A、B矩阵统计量的置信度，或者只采样A矩阵。同时为减少触发误检，我们可以一定比例的提升门限。
 
 ## 4.对基线方案：A-ABFT的讨论
 
@@ -235,7 +249,7 @@ $$ E_{\text{matmul\_diff}} \approx \epsilon_{high}\left( \sqrt{\frac{1}{8} \sum_
 
 该方案的主要局限性：
 
-1.  **对校验精度的强依赖**：假设使用高精度（FP32）进行校验，在实际硬件中这需要牺牲性能。此时第2项主导误差界。
+1.  **对校验精度的强依赖**：假设使用高精度（FP32）进行校验，在实际硬件中这需要牺牲性能。此时第2项主导误差界。但是第2部分为简化运算，并非严格按照A-ABFT的推导进行，因此不准确。
 2.  **误差模型的保守性**：对求和操作采用最坏情况分析，忽略了统计分布特性，导致1、3、4部分门限过宽松，难以检测微小错误。实际上，如果使用FP16进行校验，1、3、4部分的误差将主导误差界，此时检出率为0。
 3.  **对A*B计算误差的忽视**：没有考虑低精度矩阵乘法本身的舍入误差对校验结果的影响，导致误差界估计不足。
 4.  **A-ABFT本身隐含的假设**： A-ABFT作者推导过程中隐含了这样一个假设：所以即使过程中的数据的指数部分尾数部分是独立的。我对此持怀疑态度，比如一个[0.9,1.1]区间内均匀分布的数据，如果指数部分是1，那么尾数部分是[1.0,1.1]，如果指数部分是0.5，那么尾数部分是[1.8, 2)。作者没有讨论这种相关性是否会影响最终的误差分布。
@@ -290,14 +304,14 @@ V-ABFT（BF16）（%）
 | 比特位 | 正态分布 $N(10^{-6},1)$ | 正态分布 $N(1,1)$ | 均匀分布 $U(-1,1)$ | 截断正态分布 $N(0,1)$ |
 |------|------------------------|------------------|-------------------|----------------------|
 | **7th** | 0.0064 | 0.0000 | 19.6558 | 10.8967 |
-| **8th** | 36.6953 | 69.5500% | 46.8472 | 36.4867 |
+| **8th** | 36.6953 | 69.5500 | 46.8472 | 36.4867 |
 | **9th** | 73.4750 | 100.0000 |  75.0310 | 99.3833 |
 | **10th** | 99.9860 | -       | 99.8603 | 99.9567 |
 | **11th** | 100.0000 | 100.0000 | 100.0000 | 100.0000 |
 | **12th** | 100.0000 | 100.0000 | 100.0000 | 100.0000 |
 | **13th** | 100.0000 | 100.0000 | 100.0000 | 100.0000 |
 | **14th** | 100.0000 | -        | 100.0000 | 100.0000 |
-| **15th** | 4.4033 | 5.5100% | 42.3433% | 56.7233 |
+| **15th** | 4.4033 | 5.5100 | 42.3433 | 56.7233 |
 
 V-ABFT（FP32）（%）
 
