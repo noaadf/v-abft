@@ -85,10 +85,13 @@ def my_bound_improve(a, b):
 def my_bound_improve_robust(a, b, dtype=torch.bfloat16):
     us = {torch.bfloat16: 8e-3,
           torch.float16: 1e-3,
-          torch.float32: 2.2e-6}
+          torch.float32: 2e-06}
     e = us[dtype]
     k = a.shape[-1]
     n = b.shape[-1]
+    if dtype == torch.float32:
+        e *= torch.sqrt(torch.tensor(k/1024, dtype=torch.float32))
+    
     mu_a = torch.mean(a, dim=-1)
     mu_b = torch.mean(b, dim=-1)
     a_max = torch.max(a, dim=-1).values
@@ -114,17 +117,18 @@ def my_bound_improve_robust(a, b, dtype=torch.bfloat16):
     )
     
     bound = bound.squeeze()
-    print("bound_mean:", bound.mean().item())
     return bound
 
 
 def my_bound_improve_robust_sampling(a, b, dtype=torch.bfloat16):
     us = {torch.bfloat16: 8e-3,
           torch.float16: 1e-3,
-          torch.float32: 2.2e-6}
+          torch.float32: 2e-6}
     e = us[dtype]
     k = a.shape[-1]
     n = b.shape[-1]
+    if dtype == torch.float32:
+        e *= torch.sqrt(torch.tensor(k/1024, dtype=torch.float32))
     maskn = torch.arange(n) % 32 < 32
     maskk = torch.arange(k) % 32 < 4
     mu_a = torch.mean(a[..., maskk], dim=-1)
@@ -145,7 +149,7 @@ def my_bound_improve_robust_sampling(a, b, dtype=torch.bfloat16):
     sum_mu_b2 = torch.sum(mu_b**2)
     sum_sigma_b2 = torch.sum(sigma_b2)
     
-    bound = 2 * e * (
+    bound = e * (
         n * mu_a * sum_mu_b
         +  3 * n * torch.sqrt(mu_a**2 * sum_sigma_b2 / n + sigma_a2 * sum_mu_b2)
         +  3 * sqrt_n * sigma_a2.sqrt() * sum_sigma_b2.sqrt()
@@ -153,6 +157,44 @@ def my_bound_improve_robust_sampling(a, b, dtype=torch.bfloat16):
     
     bound = bound.squeeze()
     return bound
+
+def my_bound_improve_robust_sampling2(a, b, dtype=torch.bfloat16):
+    us = {torch.bfloat16: 8e-3,
+          torch.float16: 1e-3,
+          torch.float32: 2e-6}
+    e = us[dtype]
+    k = a.shape[-1]
+    n = b.shape[-1]
+    if dtype == torch.float32:
+        e *= torch.sqrt(torch.tensor(k/1024, dtype=torch.float32))
+    maskk = torch.arange(k) % 32 < 16
+    mu_a = torch.mean(a[..., :k//2], dim=-1)
+    mu_b = torch.mean(b[maskk, :], dim=-1)
+    a_max = torch.max(a[..., :k//2], dim=-1).values
+    b_max = torch.max(b[maskk, :], dim=-1).values
+    a_min = torch.min(a[..., :k//2], dim=-1).values
+    b_min = torch.min(b[maskk, :], dim=-1).values
+    sigma_a2 = (a_max - mu_a)*(mu_a - a_min)
+    sigma_b2 = (b_max - mu_b)*(mu_b - b_min)
+
+    mu_a = torch.abs(mu_a)
+    mu_b = torch.abs(mu_b)
+    
+    sqrt_n = torch.sqrt(torch.tensor(n, dtype=torch.float32))
+    
+    sum_mu_b = torch.sum(mu_b)*2
+    sum_mu_b2 = torch.sum(mu_b**2)*2
+    sum_sigma_b2 = torch.sum(sigma_b2)*2
+    
+    bound = e * (
+        n * mu_a * sum_mu_b
+        +  3 * n * torch.sqrt(mu_a**2 * sum_sigma_b2 / n + sigma_a2 * sum_mu_b2)
+        +  3 * sqrt_n * sigma_a2.sqrt() * sum_sigma_b2.sqrt()
+    )
+    
+    bound = bound.squeeze()
+    return bound
+
 
 def generate_matrice(sizem, sizek, std, mean, device, dtype):
     a = torch.randn(sizem, sizek, device=device, dtype=dtype) * std + mean
@@ -205,7 +247,7 @@ def flip_infuse(a, i):
             success = True
         return flipped_float_tensor, success
 
-def FT_matmul(a, b, FT_algorithm=my_bound_improve_robust):
+def FT_matmul(a, b, FT_algorithm=my_bound_improve_robust_sampling2):
     # 将A，B切割为 128*1024，1024*256 的小矩阵进行计算
     # 先将 A，B 补全为块大小的整数倍
     success = True

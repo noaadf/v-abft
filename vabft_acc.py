@@ -2,9 +2,10 @@ import torch
 import torch_npu
 import utils
 
-n = 1024
-trials = 10000
+n = 8192
+trials = 1000
 dtypes = [torch.bfloat16, torch.float32, torch.float16]
+dtypes = [torch.float32]
 
 # 定义四种矩阵初始化方式及其参数
 init_methods = [
