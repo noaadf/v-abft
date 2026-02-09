@@ -1,6 +1,8 @@
 # 浮点数校验误差门限设计说明书
 **Design Specification for Floating-Point Error Bounding in GEMM**
 
+**中文** | [English](README_EN.md)
+
 | 文档版本 | 1.2  |  |  |
 | :--- | :--- | :--- | :--- |
 | **适用场景** | 大模型训练/推理 GEMM 算子校验 | **硬件目标** | 昇腾910B |
