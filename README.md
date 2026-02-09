@@ -41,9 +41,11 @@
 为了避免全量计算方差带来的高昂开销，本设计采用**极值理论（Extreme Value Theory）**，通过行/列的最大值来反推数据分布的方差。
 
 假设矩阵元素 $x$ 服从独立同分布（i.i.d），均值为 $\mu$，方差为 $\sigma^2$。对于长度为 $n$ 的序列，其最大值 $m$ 近似满足：
+
 $$ m \approx \mu + \sigma \sqrt{2 \ln n} $$
 
 由此可得标准差 $\sigma$ 的**快速估计公式**：
+
 $$ \sigma_{est} \approx \frac{m - \mu}{\sqrt{2 \ln n}} $$
 
 > **工程意义**：通过 AIV 单元高效计算 `Max` 和 `Mean`，即可获得方差估计，无需计算昂贵的平方和。
@@ -52,7 +54,9 @@ $$ \sigma_{est} \approx \frac{m - \mu}{\sqrt{2 \ln n}} $$
 #### 2.1.2 上界估计法
 
 已知序列$x_1, x_2, ..., x_n$的最大值$m$，最小值$l$，均值$\mu$，则其方差$\sigma^2$满足：
+
 $$ \sigma^2 \leq (m - \mu)(\mu - l) $$
+
 等号在序列只取最大/最小时取得，因此我们可以通过三个量快速给出方差的上界。
 
 > **优势**：不依赖数据分布，更加鲁棒。
@@ -76,7 +80,7 @@ $$ fl(x \cdot y) = (x \cdot y)(1 + \delta u), \quad |\delta| \le 1$$
 $$ fl(x + y) = (x + y)(1 + \delta u), \quad |\delta| \le 1 $$
 
 在混合精度硬件（如 Tensor Core / Cube Unit）上，矩阵乘法的累加顺序往往由硬件微架构决定（例如分块累加、树状归约），且中间可能涉及精度转换（FP16 $\to$ FP32 $\to$ FP16、AIC内高精度）。因此，我们将浮点运算视为一个具备有界误差的“黑盒”。
-对于一个长度为 $K$ 的累加序列，考虑到硬件流水线的深度和累加顺序的不确定性，我们将累积的舍入误差建模为 $\Pi_{i=1}^s(1+\delta_i u)$，其中 $s$ 为等效累加深度。为书写简便，我们忽略 $\delta$ 的下标，将其视为一个在 $[-1, 1]$ 间波动的随机变量,并把误差写为$(1+\delta u)^s$。用$fl(...)$表示括号中一系列运算最终得到的实际浮点数结果。
+对于一个长度为 $K$ 的累加序列，考虑到硬件流水线的深度和累加顺序的不确定性，我们将累积的舍入误差建模为 $\prod_{i=1}^s(1+\delta_i u)$，其中 $s$ 为等效累加深度。为书写简便，我们忽略 $\delta$ 的下标，将其视为一个在 $[-1, 1]$ 间波动的随机变量,并把误差写为$(1+\delta u)^s$。用$fl(...)$表示括号中一系列运算最终得到的实际浮点数结果。
 
 ### 2.3 校验误差的代数表达
 
@@ -104,6 +108,7 @@ $$
 直接使用三角不等式（$|a+b| \le |a|+|b|$）会导致门限过于宽松（Worst-case Bound），在低精度下无法检测微小错误。因此，我们引入统计模型。
 
 假设 $A, B$ 的元素服从独立分布，利用均值 $\mu$ 和方差 $\sigma$ 进行标准化分解：
+
 $$ A_{mk} = \mu_{Am} + \sigma_{Am} \cdot a_{mk}, \quad a_{mk} \sim F_a $$
 
 $$ B_{kn} = \mu_{Bk} + \sigma_{Bk} \cdot b_{kn}, \quad b_{kn} \sim F_b $$
@@ -128,6 +133,7 @@ $$ \sum_n e_{kn} \sigma_{Bk} b_{kn}  = \sqrt{N} \sigma_{Bk} \beta_k b'_{k} $$
 其中 $b'_k \sim F_b'$ 是代表 $B$ 第 $k$ 行随机波动的单位（方差）变量。
 
 代入上式，误差 $E$ 变为对 $K$ 维度的累加：
+
 $$
 E = \left| \sum_k^K \left[ (\mu_{Am} + \sigma_{Am} a_{mk}) \cdot (N \alpha_k \mu_{Bk} + \sqrt{N} \sigma_{Bk}\beta_k b'_{k}) \right] \right|
 $$
@@ -136,8 +142,8 @@ $$
 
 $$
 \begin{align*}
-E = \Bigg| \bigg( & \underbrace{N \mu_{Am} \sum_k \alpha_k \mu_{Bk}}_{\text{① Bias Term}} + \underbrace{\sqrt{N} \mu_{Am} \sum_k \sigma_{Bk} \beta_k b'_k}_{\text{② Random B Term}} \\
-& + \underbrace{N \sigma_{Am} \sum_k \alpha_k\mu_{Bk} a_{mk}}_{\text{③ Random A Term}} + \underbrace{\sqrt{N} \sigma_{Am} \sum_k \sigma_{Bk} \beta_k a_{mk} b'_k}_{\text{④ Interaction Term}} \bigg) \Bigg|
+E = \Bigg| \bigg( & \underbrace{N \mu_{Am} \sum_k \alpha_k \mu_{Bk}}_{\text{(1) Bias Term}} + \underbrace{\sqrt{N} \mu_{Am} \sum_k \sigma_{Bk} \beta_k b'_k}_{\text{(2) Random B Term}} \\
+& + \underbrace{N \sigma_{Am} \sum_k \alpha_k\mu_{Bk} a_{mk}}_{\text{(3) Random A Term}} + \underbrace{\sqrt{N} \sigma_{Am} \sum_k \sigma_{Bk} \beta_k a_{mk} b'_k}_{\text{(4) Interaction Term}} \bigg) \Bigg|
 \end{align*}
 $$
 
@@ -149,6 +155,7 @@ $$
 4.  **项 ④ (Interaction)**: $\sqrt{N} \sigma_{Am} \sqrt{K} \dots$，在A、B都是0均值时占据主导，随 $\sqrt{K}$ 增长。
 
 然后利用三角不等式，
+
 $$
 \begin{align*}
 E \leq \underbrace{\left| \sum_k \alpha_k N \mu_{Am} \mu_{Bk} \right|}_{\text{Bias Term (DC)}} + \underbrace{\left| \sum_k \beta_k \sqrt{N} \mu_{Am} \sigma_{Bk} b'_{k}  +  \sum_k \alpha_k N \sigma_{Am} a_{mk} \mu_{Bk} \right|}_{\text{Linear Random Term (Primary Noise)}} + \underbrace{\left| \sum_k \beta_k \sqrt{N} \sigma_{Am} a_{mk} \sigma_{Bk} b'_{k} \right|}_{\text{Interaction Term (Secondary Noise)}}
@@ -217,12 +224,14 @@ $$ E_{total} = E_{\text{sum\_C}} + E_{\text{ele\_round}} + E_{check_1} + E_{chec
 #### $E_{\text{sum\_C}}$ : C 的求和累积误差
 
 **数学公式：**
+
 $$ E_{\text{sum\_C}} = \left( \sqrt{\frac{1}{8} \sum_{i=1}^{N} i^2} \right) \cdot \max(|C|) \cdot \epsilon_{high} $$
 
 
 #### $E_{\text{ele\_round}}$ : C 的元素量化误差累积
 
 **数学公式：**
+
 $$ E_{\text{ele\_round}} = \epsilon_{low}\sqrt{N}\max(|C|) $$
 
 *   **解释**：
@@ -233,7 +242,9 @@ $$ E_{\text{ele\_round}} = \epsilon_{low}\sqrt{N}\max(|C|) $$
 #### $E_{check_1}$ : A和Be的乘法误差和累加
 
 **数学公式：**
+
 $$ \delta_1 = \epsilon_{high} \left( \sqrt{\frac{1}{8} \sum_{i=1}^{N} i^2 } \right) \max(|B|) $$
+
 $$ E_{\text{prop}} = |A| \times \delta_1 $$
 
 *   **解释**：
@@ -243,6 +254,7 @@ $$ E_{\text{prop}} = |A| \times \delta_1 $$
 #### $E_{check_2}$ : A作用在Be误差上的二次误差
 
 **数学公式：**
+
 $$ E_{\text{matmul\_diff}} \approx \epsilon_{high}\left( \sqrt{\frac{1}{8} \sum_{k=1}^{K} k^2+\frac{K}{12}} \right)  \max(\max(|B|))\max(|A|) $$
 
 *   **解释**：

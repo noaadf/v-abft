@@ -42,9 +42,11 @@ This design proposes a **Variance-Estimation based dynamic threshold algorithm (
 To avoid the high cost of computing variance over the full data, this design employs **Extreme Value Theory (EVT)** to infer the data distribution's variance from the row/column maximum values.
 
 Assuming matrix elements $x$ are independently and identically distributed (i.i.d.) with mean $\mu$ and variance $\sigma^2$. For a sequence of length $n$, its maximum $m$ approximately satisfies:
+
 $$ m \approx \mu + \sigma \sqrt{2 \ln n} $$
 
 From this, the **fast estimation formula** for standard deviation $\sigma$ is:
+
 $$ \sigma_{est} \approx \frac{m - \mu}{\sqrt{2 \ln n}} $$
 
 > **Engineering Significance**: By efficiently computing `Max` and `Mean` on the AIV unit, we can obtain variance estimates without computing expensive sums of squares.
@@ -53,7 +55,9 @@ $$ \sigma_{est} \approx \frac{m - \mu}{\sqrt{2 \ln n}} $$
 #### 2.1.2 Upper Bound Estimation Method
 
 Given a sequence $x_1, x_2, ..., x_n$ with maximum $m$, minimum $l$, and mean $\mu$, its variance $\sigma^2$ satisfies:
+
 $$ \sigma^2 \leq (m - \mu)(\mu - l) $$
+
 Equality holds when the sequence only takes the maximum/minimum values. Thus, we can quickly provide an upper bound on variance using three quantities.
 
 > **Advantage**: Distribution-free, more robust.
@@ -77,7 +81,7 @@ $$ fl(x \cdot y) = (x \cdot y)(1 + \delta u), \quad |\delta| \le 1$$
 $$ fl(x + y) = (x + y)(1 + \delta u), \quad |\delta| \le 1 $$
 
 On mixed-precision hardware (e.g., Tensor Core / Cube Unit), the accumulation order in matrix multiplication is often determined by the hardware microarchitecture (e.g., blocked accumulation, tree reduction), and intermediate precision conversions may be involved (FP16 $\to$ FP32 $\to$ FP16, high precision within AIC). Therefore, we treat floating-point operations as a "black box" with bounded errors.
-For an accumulation sequence of length $K$, considering the pipeline depth and uncertainty in accumulation order, we model the cumulative round-off error as $\Pi_{i=1}^s(1+\delta_i u)$, where $s$ is the effective accumulation depth. For notational convenience, we omit the subscript of $\delta$, treating it as a random variable fluctuating in $[-1, 1]$, and write the error as $(1+\delta u)^s$. We use $fl(...)$ to denote the actual floating-point result of the operations in parentheses.
+For an accumulation sequence of length $K$, considering the pipeline depth and uncertainty in accumulation order, we model the cumulative round-off error as $\prod_{i=1}^s(1+\delta_i u)$, where $s$ is the effective accumulation depth. For notational convenience, we omit the subscript of $\delta$, treating it as a random variable fluctuating in $[-1, 1]$, and write the error as $(1+\delta u)^s$. We use $fl(...)$ to denote the actual floating-point result of the operations in parentheses.
 
 ### 2.3 Algebraic Expression of Verification Error
 
@@ -105,6 +109,7 @@ $$
 Directly applying the triangle inequality ($|a+b| \le |a|+|b|$) leads to overly loose thresholds (worst-case bound), which cannot detect small errors under low precision. Therefore, we introduce a statistical model.
 
 Assuming the elements of $A, B$ are independently distributed, we decompose using mean $\mu$ and standard deviation $\sigma$:
+
 $$ A_{mk} = \mu_{Am} + \sigma_{Am} \cdot a_{mk}, \quad a_{mk} \sim F_a $$
 
 $$ B_{kn} = \mu_{Bk} + \sigma_{Bk} \cdot b_{kn}, \quad b_{kn} \sim F_b $$
@@ -129,6 +134,7 @@ $$ \sum_n e_{kn} \sigma_{Bk} b_{kn}  = \sqrt{N} \sigma_{Bk} \beta_k b'_{k} $$
 where $b'_k \sim F_b'$ is a unit (variance) variable representing the random fluctuation of row $k$ of $B$.
 
 Substituting back, the error $E$ becomes an accumulation over the $K$ dimension:
+
 $$
 E = \left| \sum_k^K \left[ (\mu_{Am} + \sigma_{Am} a_{mk}) \cdot (N \alpha_k \mu_{Bk} + \sqrt{N} \sigma_{Bk}\beta_k b'_{k}) \right] \right|
 $$
@@ -137,8 +143,8 @@ Expanding the four product terms (note $\mu_{Am}, \sigma_{Am}$ do not vary with 
 
 $$
 \begin{align*}
-E = \Bigg| \bigg( & \underbrace{N \mu_{Am} \sum_k \alpha_k \mu_{Bk}}_{\text{① Bias Term}} + \underbrace{\sqrt{N} \mu_{Am} \sum_k \sigma_{Bk} \beta_k b'_k}_{\text{② Random B Term}} \\
-& + \underbrace{N \sigma_{Am} \sum_k \alpha_k\mu_{Bk} a_{mk}}_{\text{③ Random A Term}} + \underbrace{\sqrt{N} \sigma_{Am} \sum_k \sigma_{Bk} \beta_k a_{mk} b'_k}_{\text{④ Interaction Term}} \bigg) \Bigg|
+E = \Bigg| \bigg( & \underbrace{N \mu_{Am} \sum_k \alpha_k \mu_{Bk}}_{\text{(1) Bias Term}} + \underbrace{\sqrt{N} \mu_{Am} \sum_k \sigma_{Bk} \beta_k b'_k}_{\text{(2) Random B Term}} \\
+& + \underbrace{N \sigma_{Am} \sum_k \alpha_k\mu_{Bk} a_{mk}}_{\text{(3) Random A Term}} + \underbrace{\sqrt{N} \sigma_{Am} \sum_k \sigma_{Bk} \beta_k a_{mk} b'_k}_{\text{(4) Interaction Term}} \bigg) \Bigg|
 \end{align*}
 $$
 
@@ -150,6 +156,7 @@ $$
 4.  **Term ④ (Interaction)**: $\sqrt{N} \sigma_{Am} \sqrt{K} \dots$, dominant when both A and B have zero mean, growing with $\sqrt{K}$.
 
 Then applying the triangle inequality,
+
 $$
 \begin{align*}
 E \leq \underbrace{\left| \sum_k \alpha_k N \mu_{Am} \mu_{Bk} \right|}_{\text{Bias Term (DC)}} + \underbrace{\left| \sum_k \beta_k \sqrt{N} \mu_{Am} \sigma_{Bk} b'_{k}  +  \sum_k \alpha_k N \sigma_{Am} a_{mk} \mu_{Bk} \right|}_{\text{Linear Random Term (Primary Noise)}} + \underbrace{\left| \sum_k \beta_k \sqrt{N} \sigma_{Am} a_{mk} \sigma_{Bk} b'_{k} \right|}_{\text{Interaction Term (Secondary Noise)}}
@@ -218,12 +225,14 @@ Below is the mathematical formula and physical meaning of each term:
 #### $E_{\text{sum\_C}}$ : Cumulative Summation Error of C
 
 **Formula:**
+
 $$ E_{\text{sum\_C}} = \left( \sqrt{\frac{1}{8} \sum_{i=1}^{N} i^2} \right) \cdot \max(|C|) \cdot \epsilon_{high} $$
 
 
 #### $E_{\text{ele\_round}}$ : Cumulative Element Quantization Error of C
 
 **Formula:**
+
 $$ E_{\text{ele\_round}} = \epsilon_{low}\sqrt{N}\max(|C|) $$
 
 *   **Explanation**:
@@ -234,7 +243,9 @@ $$ E_{\text{ele\_round}} = \epsilon_{low}\sqrt{N}\max(|C|) $$
 #### $E_{check_1}$ : Multiplication Error and Accumulation of A and Be
 
 **Formula:**
+
 $$ \delta_1 = \epsilon_{high} \left( \sqrt{\frac{1}{8} \sum_{i=1}^{N} i^2 } \right) \max(|B|) $$
+
 $$ E_{\text{prop}} = |A| \times \delta_1 $$
 
 *   **Explanation**:
@@ -244,6 +255,7 @@ $$ E_{\text{prop}} = |A| \times \delta_1 $$
 #### $E_{check_2}$ : Secondary Error from A Acting on Be Error
 
 **Formula:**
+
 $$ E_{\text{matmul\_diff}} \approx \epsilon_{high}\left( \sqrt{\frac{1}{8} \sum_{k=1}^{K} k^2+\frac{K}{12}} \right)  \max(\max(|B|))\max(|A|) $$
 
 *   **Explanation**:
