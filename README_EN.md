@@ -95,11 +95,11 @@ $$
 Using the floating-point model above to expand, the error arises from the difference in accumulation depths $s_1$ (multiply then accumulate then sum) and $s_2$ (sum then multiply) between the two computation paths:
 
 $$
-\begin{align*}
+\begin{aligned}
 E &= \left| \sum_n \sum_k A_{mk} B_{kn} (1+\delta u)^{s_1} - \sum_n \sum_k A_{mk} B_{kn} (1+\delta u)^{s_2} \right| \\
   &= \left| \sum_n \sum_k A_{mk} B_{kn} \cdot \underbrace{((1+\delta u)^{s_1} - (1+\delta u)^{s_2})}_{\text{Effective Error Factor } e_{kn}} \right| \\
   &:= \left| \sum_n \sum_k e_{kn} A_{mk} B_{kn} \right|
-\end{align*}
+\end{aligned}
 $$
 
 > **Note**: $e_k$ represents the **composite error coefficient** determined jointly by the path difference and machine precision.
@@ -118,11 +118,12 @@ $$ B_{kn} = \mu_{Bk} + \sigma_{Bk} \cdot b_{kn}, \quad b_{kn} \sim F_b $$
 According to the updated variable definitions ($A$ uses row statistics $\mu_{Am}$, $B$ uses row statistics $\mu_{Bk}$), the subscripts and summation logic in the derivation need to be strictly synchronized.
 
 Expanding $E$:
+
 $$
-\begin{align*}
+\begin{aligned}
 E &= \left| \sum_n \sum_k e_{kn} (\mu_{Am} + \sigma_{Am} a_{mk})(\mu_{Bk} + \sigma_{Bk} b_{kn}) \right| \\
   &= \left| \sum_k (\mu_{Am} + \sigma_{Am} a_{mk}) \underbrace{\left(e_{kn} \sum_n (\mu_{Bk} + \sigma_{Bk} b_{kn}) \right)}_{\text{Sum over } N \text{ columns (Row } k \text{ of B)}} \right|
-\end{align*}
+\end{aligned}
 $$
 
 By the Central Limit Theorem (CLT), summing over the $N$ columns of $B$. Note that $\mu_{Bk}$ and $\sigma_{Bk}$ are statistics of row $k$ of $B$, so they are constants when summing over $n$. Let $\alpha_k=\frac{\sum_n e_{kn}}{N}$, $\beta_k=\sqrt{\frac{\sum_n e_{kn}^2}{N}}$, then:
@@ -142,10 +143,10 @@ $$
 Expanding the four product terms (note $\mu_{Am}, \sigma_{Am}$ do not vary with $k$ and can be extracted outside the summation):
 
 $$
-\begin{align*}
+\begin{aligned}
 E = \Bigg| \bigg( & \underbrace{N \mu_{Am} \sum_k \alpha_k \mu_{Bk}}_{\text{(1) Bias Term}} + \underbrace{\sqrt{N} \mu_{Am} \sum_k \sigma_{Bk} \beta_k b'_k}_{\text{(2) Random B Term}} \\
 & + \underbrace{N \sigma_{Am} \sum_k \alpha_k\mu_{Bk} a_{mk}}_{\text{(3) Random A Term}} + \underbrace{\sqrt{N} \sigma_{Am} \sum_k \sigma_{Bk} \beta_k a_{mk} b'_k}_{\text{(4) Interaction Term}} \bigg) \Bigg|
-\end{align*}
+\end{aligned}
 $$
 
 #### Physical Interpretation
@@ -158,18 +159,18 @@ $$
 Then applying the triangle inequality,
 
 $$
-\begin{align*}
+\begin{aligned}
 E \leq \underbrace{\left| \sum_k \alpha_k N \mu_{Am} \mu_{Bk} \right|}_{\text{Bias Term (DC)}} + \underbrace{\left| \sum_k \beta_k \sqrt{N} \mu_{Am} \sigma_{Bk} b'_{k}  +  \sum_k \alpha_k N \sigma_{Am} a_{mk} \mu_{Bk} \right|}_{\text{Linear Random Term (Primary Noise)}} + \underbrace{\left| \sum_k \beta_k \sqrt{N} \sigma_{Am} a_{mk} \sigma_{Bk} b'_{k} \right|}_{\text{Interaction Term (Secondary Noise)}}
-\end{align*}
+\end{aligned}
 $$
 
 To obtain an engineering-usable threshold, we introduce a uniform upper bound $e_{max} \ge max\{|\alpha_k|, |\beta_k|\}$ and extract it:
 For the random terms, using the variance property of sums of independent random variables ($Var(\sum X_i) = \sum Var(X_i)$), and taking $4\sigma$ (approximately 99.9% confidence for normal distributions) as the safety margin:
 
 $$
-\begin{align*}
+\begin{aligned}
 Bound &\lesssim e_{max} \left( \underbrace{N|\mu_{Am}| \sum_k |\mu_{Bk}|}_{\text{Deterministic Bound}} + 4\sqrt{\underbrace{N \sum_k \mu_{Am}^2 \sigma_{Bk}^2}_{\text{Var of Term 2}} + \underbrace{N^2 \sigma_{Am}^2 \sum_k \mu_{Bk}^2}_{\text{Var of Term 3}}} + 4\underbrace{\sqrt{N}\sigma_{Am} \sqrt{\sum_k \sigma_{Bk}^2}}_{\text{SD of Term 4}} \right)
-\end{align*}
+\end{aligned}
 $$
 
 > Note: Terms 2 and 3 are often independent variables, so we combine them, while Term 4 has some coupling with Terms 2 and 3, so it is bounded separately. Additionally, when a and b are independent, the variance of $A_{mk} b'_{k}$ is 1, but if they are positively correlated, the variance > 1, in which case a larger coefficient may be needed.

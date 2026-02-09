@@ -94,11 +94,11 @@ $$
 利用上述浮点模型展开，误差来源于两条计算路径累加深度 $s_1$（先乘后加再求和）与 $s_2$（先求和再乘）的差异：
 
 $$
-\begin{align*}
+\begin{aligned}
 E &= \left| \sum_n \sum_k A_{mk} B_{kn} (1+\delta u)^{s_1} - \sum_n \sum_k A_{mk} B_{kn} (1+\delta u)^{s_2} \right| \\
   &= \left| \sum_n \sum_k A_{mk} B_{kn} \cdot \underbrace{((1+\delta u)^{s_1} - (1+\delta u)^{s_2})}_{\text{Effective Error Factor } e_{kn}} \right| \\
   &:= \left| \sum_n \sum_k e_{kn} A_{mk} B_{kn} \right|
-\end{align*}
+\end{aligned}
 $$
 
 > **注**：$e_k$ 代表了由路径差异和机器精度共同决定的**综合误差系数**。
@@ -117,11 +117,12 @@ $$ B_{kn} = \mu_{Bk} + \sigma_{Bk} \cdot b_{kn}, \quad b_{kn} \sim F_b $$
 根据您更新的变量定义（$A$ 使用行统计量 $\mu_{Am}$，$B$ 使用行统计量 $\mu_{Bk}$），推导过程中的下标和求和逻辑需要进行严格的同步更新。
 
 将 $E$ 展开：
+
 $$
-\begin{align*}
+\begin{aligned}
 E &= \left| \sum_n \sum_k e_{kn} (\mu_{Am} + \sigma_{Am} a_{mk})(\mu_{Bk} + \sigma_{Bk} b_{kn}) \right| \\
   &= \left| \sum_k (\mu_{Am} + \sigma_{Am} a_{mk}) \underbrace{\left(e_{kn} \sum_n (\mu_{Bk} + \sigma_{Bk} b_{kn}) \right)}_{\text{Sum over } N \text{ columns (Row } k \text{ of B)}} \right|
-\end{align*}
+\end{aligned}
 $$
 
 根据中心极限定理（CLT），对 $B$ 的 $N$ 列求和。注意此处 $\mu_{Bk}$ 和 $\sigma_{Bk}$ 是 $B$ 第 $k$ 行的统计量，因此在对 $n$ 求和时视为常数,记$\alpha_k=\frac{\sum_n e_{kn}}{N}$,$\beta_k=\sqrt{\frac{\sum_n e_{kn}^2}{N}}$则有：
@@ -141,10 +142,10 @@ $$
 展开括号内的四项乘积（注意 $\mu_{Am}, \sigma_{Am}$ 均不随 $k$ 变化，可提取至求和符号外）：
 
 $$
-\begin{align*}
+\begin{aligned}
 E = \Bigg| \bigg( & \underbrace{N \mu_{Am} \sum_k \alpha_k \mu_{Bk}}_{\text{(1) Bias Term}} + \underbrace{\sqrt{N} \mu_{Am} \sum_k \sigma_{Bk} \beta_k b'_k}_{\text{(2) Random B Term}} \\
 & + \underbrace{N \sigma_{Am} \sum_k \alpha_k\mu_{Bk} a_{mk}}_{\text{(3) Random A Term}} + \underbrace{\sqrt{N} \sigma_{Am} \sum_k \sigma_{Bk} \beta_k a_{mk} b'_k}_{\text{(4) Interaction Term}} \bigg) \Bigg|
-\end{align*}
+\end{aligned}
 $$
 
 #### 物理意义解读
@@ -157,18 +158,18 @@ $$
 然后利用三角不等式，
 
 $$
-\begin{align*}
+\begin{aligned}
 E \leq \underbrace{\left| \sum_k \alpha_k N \mu_{Am} \mu_{Bk} \right|}_{\text{Bias Term (DC)}} + \underbrace{\left| \sum_k \beta_k \sqrt{N} \mu_{Am} \sigma_{Bk} b'_{k}  +  \sum_k \alpha_k N \sigma_{Am} a_{mk} \mu_{Bk} \right|}_{\text{Linear Random Term (Primary Noise)}} + \underbrace{\left| \sum_k \beta_k \sqrt{N} \sigma_{Am} a_{mk} \sigma_{Bk} b'_{k} \right|}_{\text{Interaction Term (Secondary Noise)}}
-\end{align*}
+\end{aligned}
 $$
 
 为了得到工程可用的门限，我们引入一致上界 $e_{max} \ge max\{|\alpha_k|, |\beta_k|\}$，将其提取至外部：
 对于随机项，利用独立随机变量和的方差性质（$Var(\sum X_i) = \sum Var(X_i)$），并取 $4\sigma$（对正态分布约 99.9% 置信度）作为安全边界：
 
 $$
-\begin{align*}
+\begin{aligned}
 Bound &\lesssim e_{max} \left( \underbrace{N|\mu_{Am}| \sum_k |\mu_{Bk}|}_{\text{Deterministic Bound}} + 4\sqrt{\underbrace{N \sum_k \mu_{Am}^2 \sigma_{Bk}^2}_{\text{Var of Term 2}} + \underbrace{N^2 \sigma_{Am}^2 \sum_k \mu_{Bk}^2}_{\text{Var of Term 3}}} + 4\underbrace{\sqrt{N}\sigma_{Am} \sqrt{\sum_k \sigma_{Bk}^2}}_{\text{SD of Term 4}} \right)
-\end{align*}
+\end{aligned}
 $$
 
 >注：2、3项往往是独立的变量，因此我们将它们合并处理，而第4项与2、3项有一定的耦合，因此单独放缩。另外，在a、b独立时$A_{mk} b'_{k}$方差为1，但如果它们正相关，那么方差>1,此时可能要取更大的系数来控制。
