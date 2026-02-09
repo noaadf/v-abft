@@ -218,22 +218,22 @@ We define the following symbols:
 
 The total error bound $E_{total}$ returned by the function consists of four parts:
 
-$$ E_{total} = E_{\text{sum\_C}} + E_{\text{ele\_round}} + E_{check_1} + E_{check_2} $$
+$$ E_{total} = E_{\text{sum-C}} + E_{\text{ele-round}} + E_{check_1} + E_{check_2} $$
 
 Below is the mathematical formula and physical meaning of each term:
 
-#### $E_{\text{sum\_C}}$ : Cumulative Summation Error of C
+#### $E_{\text{sum-C}}$ : Cumulative Summation Error of C
 
 **Formula:**
 
-$$ E_{\text{sum\_C}} = \left( \sqrt{\frac{1}{8} \sum_{i=1}^{N} i^2} \right) \cdot \max(|C|) \cdot \epsilon_{high} $$
+$$ E_{\text{sum-C}} = \left( \sqrt{\frac{1}{8} \sum_{i=1}^{N} i^2} \right) \cdot \max(|C|) \cdot \epsilon_{high} $$
 
 
-#### $E_{\text{ele\_round}}$ : Cumulative Element Quantization Error of C
+#### $E_{\text{ele-round}}$ : Cumulative Element Quantization Error of C
 
 **Formula:**
 
-$$ E_{\text{ele\_round}} = \epsilon_{low}\sqrt{N}\max(|C|) $$
+$$ E_{\text{ele-round}} = \epsilon_{low}\sqrt{N}\max(|C|) $$
 
 *   **Explanation**:
     *   $\max(|C|)$ is the vector obtained by taking the maximum absolute value per row of matrix C.
@@ -256,7 +256,7 @@ $$ E_{\text{prop}} = |A| \times \delta_1 $$
 
 **Formula:**
 
-$$ E_{\text{matmul\_diff}} \approx \epsilon_{high}\left( \sqrt{\frac{1}{8} \sum_{k=1}^{K} k^2+\frac{K}{12}} \right)  \max(\max(|B|))\max(|A|) $$
+$$ E_{\text{matmul-diff}} \approx \epsilon_{high}\left( \sqrt{\frac{1}{8} \sum_{k=1}^{K} k^2+\frac{K}{12}} \right)  \max(\max(|B|))\max(|A|) $$
 
 *   **Explanation**:
     *   $\max(\max(|B|))$ is the scalar maximum of all absolute values in matrix B. $\max(|A|)$ is the vector obtained by taking the maximum absolute value per row of matrix A.

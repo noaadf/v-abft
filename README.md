@@ -217,22 +217,22 @@ $$
 
 函数返回的总误差界限 $E_{total}$ 由四部分组成：
 
-$$ E_{total} = E_{\text{sum\_C}} + E_{\text{ele\_round}} + E_{check_1} + E_{check_2} $$
+$$ E_{total} = E_{\text{sum-C}} + E_{\text{ele-round}} + E_{check_1} + E_{check_2} $$
 
 下面是每一项的数学公式及其物理含义：
 
-#### $E_{\text{sum\_C}}$ : C 的求和累积误差
+#### $E_{\text{sum-C}}$ : C 的求和累积误差
 
 **数学公式：**
 
-$$ E_{\text{sum\_C}} = \left( \sqrt{\frac{1}{8} \sum_{i=1}^{N} i^2} \right) \cdot \max(|C|) \cdot \epsilon_{high} $$
+$$ E_{\text{sum-C}} = \left( \sqrt{\frac{1}{8} \sum_{i=1}^{N} i^2} \right) \cdot \max(|C|) \cdot \epsilon_{high} $$
 
 
-#### $E_{\text{ele\_round}}$ : C 的元素量化误差累积
+#### $E_{\text{ele-round}}$ : C 的元素量化误差累积
 
 **数学公式：**
 
-$$ E_{\text{ele\_round}} = \epsilon_{low}\sqrt{N}\max(|C|) $$
+$$ E_{\text{ele-round}} = \epsilon_{low}\sqrt{N}\max(|C|) $$
 
 *   **解释**：
     *   $\max(|C|)$表示对矩阵C每行元素绝对值取最大值得到的向量。
@@ -255,7 +255,7 @@ $$ E_{\text{prop}} = |A| \times \delta_1 $$
 
 **数学公式：**
 
-$$ E_{\text{matmul\_diff}} \approx \epsilon_{high}\left( \sqrt{\frac{1}{8} \sum_{k=1}^{K} k^2+\frac{K}{12}} \right)  \max(\max(|B|))\max(|A|) $$
+$$ E_{\text{matmul-diff}} \approx \epsilon_{high}\left( \sqrt{\frac{1}{8} \sum_{k=1}^{K} k^2+\frac{K}{12}} \right)  \max(\max(|B|))\max(|A|) $$
 
 *   **解释**：
     *   $\max(\max(|B|)) $表示对矩阵B所有元素绝对值取最大值的标量。$\max(|A|)$ 表示对矩阵A每行元素绝对值取最大值得到的向量。
